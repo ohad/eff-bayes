@@ -1,0 +1,247 @@
+(* ---- Auxiliary functions. ---- *)
+let (|>) x f = f x
+
+let separate pred =
+  let rec loop holds fails = function
+  | [] -> (reverse holds, reverse fails)
+  | x :: xs -> 
+      if pred x then 
+        loop (x :: holds) fails xs
+      else
+        loop holds (x :: fails) xs
+  in loop [] []
+
+(* -------------------------------------------------------------------------- *)
+(* ---- Non-negative reals represented as logarithms. ---- *)
+type rplus = Exp of float
+let rplus_of_float x =  Exp (log x)
+let rplus_of_int a =  rplus_of_float(float_of_int a)
+let float_of_rplus (Exp x) = exp x
+
+let ( +.. ) =
+  let log_plus x y = ( x +. log1p (exp (y -. x))) in
+  fun (Exp x) (Exp y) ->
+  if (x < y)
+  then Exp (log_plus y x)
+  else Exp (log_plus x y)
+  
+let ( *.. ) (Exp x) (Exp y) = Exp (x +. y)
+let ( /.. ) (Exp x) (Exp y) = Exp (x -. y)
+let ( <=. ) (Exp x) (Exp y) = x <= y
+
+(* -------------------------------------------------------------------------- *)
+
+(* ---- Effects and types ---- *)
+effect Sample : float
+effect Score  : rplus -> unit
+
+type 'a list_dist = (rplus * 'a) list 
+type 'a model = unit -> 'a (* ! Sample, Score *)
+
+(* ---- Random sampler and weighted branches ---- *)
+let score (log_likelihood : rplus) : unit (* ! Score *)
+  = perform (Score log_likelihood)
+
+let weighted : 'a (*! Score, e*) => rplus * 'a  (*! e*)
+  = handler 
+  | effect (Score w) k -> (fun w' -> continue k () (w' *.. w))
+  | v -> (fun w -> (w,v))
+  | finally prog -> prog (Exp 0.)
+
+let random_sampler : 'a (* ! Sample *) => 'a (*! RandomFloat *)
+  = handler
+  | effect Sample k -> continue k (perform (RandomFloat 1.))
+  | v -> v
+
+let bernoulli_sample (p : float) : bool (*! Sample *)
+  =  (p > perform Sample);;
+
+(* ---- Rain model for testing. ---- *)
+
+let rain_model : bool model = fun () ->
+  let rain = bernoulli_sample 0.2 in
+  let sprinkler = bernoulli_sample 0.1 in
+  let likelihood_wet_lawn = 
+    (match (rain, sprinkler) with
+    | ( true , true ) -> 0.99
+    | ( true , false) -> 0.70
+    | ( false, true ) -> 0.90
+    | ( false, false) -> 0.01
+    ) |> rplus_of_float
+  in
+  score likelihood_wet_lawn;
+  rain
+
+let whatever_model : int model = fun () ->
+  let p1 = bernoulli_sample 0.2 in
+  let p2 = bernoulli_sample 0.1 in
+  if p1 && p2 then
+    (score (Exp 1.);
+    let p3 = bernoulli_sample 0.5 in
+    if p3 then
+      (score (Exp 3.); 3)
+    else
+      (score (Exp 2.); 2))
+  else if p1 then
+    (* This one should be droped by the SMC. *)
+    (score (Exp -1000000.); score (Exp 1000000.); score (Exp 1.); 1)
+  else
+    (score (Exp -1.); 0)
+
+(* ---- Testing ---- *)
+;;(*
+let (w, rain) =
+  with random_sampler handle
+  with weighted handle
+  rain_model ()
+in
+print_endline (
+  "Single run test : weight, value =" ^ (to_string (float_of_rplus w, rain))
+)
+;;*)
+(* -------------------------------------------------------------------------- *)
+
+(* ---- Sequential Monte Carlo ---- *)
+
+(*TODO: refactor the random sampler out
+  Does it affect performance?
+*)
+let populate (k : int) (model : 'a model (*! Score, Sample, e*))
+    : 'a list_dist (*! Sample, e *) =
+  let rec loop i acc =
+    if i < k then
+      let result = 
+        with weighted handle
+          score (Exp 0. /.. rplus_of_int k);
+          model ()
+      in
+      loop (i + 1) (result :: acc)
+    else
+      acc
+  in 
+  loop 0 []
+
+let aggregate (pop : 'a list_dist) : 'a list_dist =
+  let rec aggr_aux acc = function
+    | [] -> acc
+    | (w, x) :: xs ->
+      let holds, fails = separate (fun (w, a) -> x = a) xs in
+      let new_w = fold_left (fun s (w, _) -> s +.. w) w holds in 
+      aggr_aux ((new_w, x) :: acc) fails
+  in 
+  aggr_aux [] pop
+
+let sum_weights (list_dist : 'a list_dist) : rplus = 
+  fold_left (fun acc (w, x) -> acc +.. w) (rplus_of_int 0) list_dist
+
+let normalise (pop : 'a list_dist) : 'a list_dist =
+  let total = sum_weights pop in
+  print_endline ("total size is: " ^ to_string (float_of_rplus total));
+  map (fun (r,x) -> (r /.. total), x) pop
+
+(* -------------------------------------------------------------------------- *)
+(* ---- Test ---- *)
+;;
+let rain_pop_test =
+  with random_sampler handle
+  populate 5000 whatever_model
+in
+let result = 
+  rain_pop_test 
+  |> aggregate 
+  |> normalise 
+  |> map (fun (w,x) -> (float_of_rplus w), x)
+in print_endline ("Final population:" ^ (to_string result))
+;;
+
+
+(* -------------------------------------------------------------------------- *)
+(* ---- Resampling ---- *)
+
+let weighted_choice (list_dist : 'a list_dist) : 'a (*! Sample *)
+  = 
+  (*ASSUME list_dist is NON-EMPTY *)
+  let total_w = sum_weights list_dist in
+  let total_fuel = (float_of_rplus total_w) *. (perform Sample) in
+  let rec choose fuel ((w, x) :: wxs) =
+    let fuel = fuel -. float_of_rplus w in
+    if fuel <= 0. then x else choose fuel wxs
+  in
+  choose total_fuel list_dist
+
+let resample (list_dist : 'a list_dist) : 'a list_dist (*! Sample *)
+  =
+  let n = length list_dist in
+  let total_w = sum_weights list_dist in
+  let resample_model : 'a model = fun () -> (
+    score total_w;
+    weighted_choice list_dist )
+  in
+  populate n resample_model 
+
+
+(* -------------------------------------------------------------------------- *)
+(* ---- Test ---- *)
+
+let populate_and_resample pop_size k (model : 'a model) 
+    : 'a list_dist (* !Sample *) =
+  let list_dist = populate pop_size model in
+  let rec resampler i list_dist =
+    if (i <= 0) then
+      list_dist
+    else  
+      resampler (i - 1) (resample list_dist)
+  in 
+  resampler k list_dist
+
+;;
+with random_sampler handle
+let aggregated = aggregate (populate_and_resample 500 2 whatever_model) in
+perform (Print (to_string aggregated ^ "\n"));
+map (fun (Exp w,x) -> (exp w, x)) (normalise aggregated)
+;;
+
+(* -------------------------------------------------------------------------- *)
+(* ---- SMC ---- *)
+
+type 'a thunk = unit -> 'a
+
+(* Will thunks get bloated after many 'yields'? *)
+let yield_on_score : 'a => 'a thunk = handler
+  | effect (Score w) k -> (score w; fun () -> (k ()) ())
+  | v -> fun () -> v
+
+let advance (thunk_list : 'a thunk list_dist) 
+    : 'a thunk list_dist (* ! Sample *) =
+  let poke (w, t) =
+    with weighted handle
+    (score w ; with yield_on_score handle t ())
+  in
+  map poke thunk_list
+
+let finalize (thunk_list : 'a thunk list_dist) : 'a list_dist (* ! Sample *) =
+  let poke (w, t) =
+    with weighted handle
+    (score w; t ())
+  in
+  map poke thunk_list
+
+let test_smc (n : int) (r : int) (model : 'a model)
+    : 'a list_dist (* ! Sample *) =
+  (* I wrote this just to make sure that the functions work correctly. *)
+  let pop = populate n (fun () -> with yield_on_score handle model ()) in
+  let rec loop i pop =
+    if i < r then
+      pop |> resample |> advance |> loop (i + 1)
+    else
+      finalize pop
+  in 
+  loop 0 pop
+
+
+;;
+with random_sampler handle
+let aggregated = aggregate (test_smc 500 2 whatever_model) in
+perform (Print (to_string aggregated ^ "\n"));
+map (fun (Exp w,x) -> (exp w, x)) (normalise aggregated)
+;;
