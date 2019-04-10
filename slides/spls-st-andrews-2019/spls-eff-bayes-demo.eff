@@ -255,7 +255,8 @@ let fitted = fit homogeneous_linear dataset
 let weighted : 'a (*! Score, e*)
                => rplus * 'a  (*! e*)
   = handler 
-  | effect (Score w) k -> (fun w' -> continue k () (w' *.. w))
+  | effect (Score w) k ->
+     (fun w' -> continue k () (w' *.. w))
   | v -> (fun w -> (w,v))
   | finally prog -> prog (Exp 0.)
 
@@ -302,7 +303,8 @@ let populate
     else acc
   in loop 0 []
 (********************************************)
-(*  importance sampling    (ctd)            *)let sum_weights (list_dist : 'a list_dist)
+(*  importance sampling    (ctd)            *)
+let sum_weights (list_dist : 'a list_dist)
     : rplus = 
   fold_left
     (fun acc (w, x) -> acc +.. w)
@@ -339,8 +341,8 @@ let weighted_choice
 (********************************************)
 let plot_population histogram name 
   =
-  let irrelevant =
-    filter (fun (Exp w, _) -> exp w < 0.001)
+  let irrelevant = (*try 'negligible' thanks giorgio*)
+    filter (fun (Exp w, _) -> exp w < 0.00001)
       histogram
     |> length
   in
@@ -417,7 +419,8 @@ let advance (thunk_list : 'a thunk list_dist)
   in
   map poke thunk_list
 
-let finalize (thunk_list : 'a thunk list_dist) : 'a list_dist (* ! Sample *) =
+let finalize (thunk_list : 'a thunk list_dist)
+    : 'a list_dist (* ! Sample *) =
   let poke (w, t) =
   with weighted handle
          (score w; t ())
