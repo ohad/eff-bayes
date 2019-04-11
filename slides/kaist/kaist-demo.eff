@@ -158,7 +158,6 @@ let float_of_rplus (Exp x) = exp x
 let ln (Exp x) = x
 let e x = Exp x
 
-
 (********************************************)
 (*               Eff basics (ctd)           *)
 (* Example: basic numerics                  *)
@@ -212,8 +211,6 @@ let hello () =
 
 
 
-
-
 (********************************************)
 (* Effects   (ctd)                          *)
 let plot : (float -> float) -> string
@@ -260,7 +257,6 @@ let explosive_div x y =
   if y = 0
   then boom ()
   else x / y
-
 let graceful_div x y
   = with handler
        | effect Boom _ ->
@@ -298,8 +294,16 @@ let printer =
   | v -> v
 
 
+
+
+
+
+       
+
+       
            
-(********************************************)  (* Example: Unix-like cat (ctd)             *)  
+(********************************************)
+(* Example: Unix-like cat (ctd)             *)  
 
 (* handling input *)           
 let line_buffer = 
@@ -314,7 +318,6 @@ let line_buffer =
    in get_char
 | v -> fun buffer -> v
 | finally f -> f ""
-
 
 
 (********************************************)
@@ -344,7 +347,6 @@ let double_cat () = top_level (fun () ->
           put c; put c; k ()
        | v -> v
        handle basic_cat ())
-
 
 let reverse_cat () = top_level (fun () ->
 
@@ -387,7 +389,6 @@ let palindrome_cat () = top_level (fun () ->
 
 
 
-
                                                  *)                        
 (********************************************)
 (**   Goal: Bayesian Statistical Modelling 
@@ -412,7 +413,7 @@ let palindrome_cat () = top_level (fun () ->
 effect Sample : float
 effect Score  : rplus -> unit
 
-let sample () = perform (Sample ())
+let sample () = perform  Sample   
 let score   r = perform (Score   r)
            
 let random_sampler :
@@ -420,7 +421,7 @@ let random_sampler :
    => 'a (*! RandomFloat   *)
   = handler
   | effect Sample k ->
-     continue k (perform (RandomFloat 1.))
+     k (perform (RandomFloat 1.))
   | v -> v
 
 
@@ -478,7 +479,6 @@ let fitted : regression = fun () ->
      
 
      
-     
 (********************************************)
 (* More generally                           *)
 type data = (float*float) list
@@ -504,7 +504,7 @@ let weighted initial_weight
     : 'a (*! Score, e*) => rplus * 'a  (*! e*)
   = handler 
   | effect (Score w) k ->
-     (fun w' -> continue k () (w' *.. w))
+     (fun w' -> k () (w' *.. w))
   | v -> (fun w -> (w,v))
   | finally prog -> prog initial_weight
 
@@ -536,7 +536,6 @@ let plot_weighted_fitted ()
 (********************************************)
 (* importance sampling                      *)
 (* using model populations                  *)
-
 type 'a histogram = (rplus * 'a) list 
                       
 let populate
@@ -587,7 +586,6 @@ let weighted_choice
   choose total_fuel histogram
 
 
-  
 
 (********************************************)
 (* particle populations (ctd)               *)
@@ -643,7 +641,6 @@ let resample (histogram : 'a histogram)
 let pop_map (f : 'a -> 'b)
     : 'a histogram -> 'b histogram
   = map (fun (r,a) -> (r,f a)  )
-
 (********************************************)
 (* suspended particles                      *)
 type 'a thunk = unit -> 'a
@@ -683,7 +680,6 @@ let finalize
 (********************************************)
 let smc particle_num step_num step_size model
   = with random_sampler handle
-    (* set up the data structure *)
     let pop = populate particle_num
        (fun () -> with advance handle
         with yield_on_score handle model ())
@@ -716,7 +712,6 @@ let smc particle_num step_num step_size model
 
 
 
-
        
 (********************************************)
 (*Summary:
@@ -738,4 +733,3 @@ let smc particle_num step_num step_size model
      
      (MEGA = Make Equations Great Again)
 *********************************************)
-         
