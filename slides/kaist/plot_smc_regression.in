@@ -1,0 +1,19 @@
+set terminal eps
+set xtics 1,1,6 font "Times-Roman, 20"
+set key font "Times-Roman, 30"
+set xrange [-1:7]
+set samples 100000
+normal(x, mu, sd) = (1/(sd*sqrt(2*pi)))*exp(-(x-mu)**2/(2*sd**2))
+U(x) = x < 0? 0 : x <= 1? 6*((x - (1/2))**2) : 0
+cbeta(x,p,q)=ibeta(p,q,x)
+f(x,a) = a*x
+
+set output "output/plot_smc_regression.eps"
+set yrange [-3:3]
+set ytics -6,1,6 font "Times-Roman, 20"
+
+plot [0:4] for [d=0:14] sprintf("data/smc_regression_%d.dat", d) notitle lt 1 lw 4 lc '#008b8bff' with line, \
+     'absolute_data.dat' with points pointtype 7 pointsize .7 linecolor rgb '#000000' notitle
+
+
+

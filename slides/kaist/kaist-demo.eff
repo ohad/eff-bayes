@@ -1,0 +1,726 @@
+(********************************************
+  Eff-Bayes: modular implementations 
+                  of 
+     approximate Bayesian inference 
+                 with 
+           effect handlers 
+
+          work in progress
+ 
+    Oliver Goldstein, ____Ohad Kammar____, 
+      Žiga Lukšič, Matija Pretnar, 
+                  and 
+             Adam Ścibior
+
+            School of Computing
+                  KAIST
+              11 April 2019 
+                                            *)
+(********************************************
+         2nd International Summer School on
+               Metaprogramming
+
+
+                Schloss Dagstuhl
+
+        Leibniz Center for Informatics
+                    Germany
+
+             11th-16th August 2019
+            (the week before ICFP'19)
+
+
+
+https://www.cl.cam.ac.uk/events/metaprog/2019/
+
+                                            *)
+(********************************************)
+(*
+  
+
+   With thanks to Oleg Kiselyov
+
+     who has been teaching us these
+    
+       techniques for many years
+
+         http://okmij.org/ftp/kakuritu/
+
+
+
+
+
+
+                                            *)
+(********************************************)
+(*
+
+   Effect handlers:
+
+     + new programming construct
+
+     + generalise exception handlers
+
+     + powerful/expressive
+
+        user-defined effects
+
+        sophisticated control flow
+
+
+
+
+ *)
+(********************************************)
+(*     Existing implementations
+  
+   Academic research languages:
+ 
+     Eff (this talk)
+       [Bauer-Pretnar'15]
+
+   and many more:
+     Koka [Vazou-Leijen'16]
+     Frank [Lindley-McBride-McLaughlin'17]
+     Links [Hillerström et al.'17]
+     Idris [Brady'13]
+     ...
+   Complete list:
+     github.com/yallop/effects-bibliography
+                                            *)
+(********************************************)
+(********************************************)
+(*     Existing implementations
+  
+   Mainstream/industrial languages
+ 
+   C       [Leijen'17]
+   F#      [Palladinos'16]
+   Scala   [Brachthäuser'17]
+   OCaml   [Dolan et al.'17]
+   Haskell [Kiselyov'13]
+   ...
+
+ 
+
+    Complete list:
+     github.com/yallop/effects-bibliography
+                                            *)
+(********************************************)
+(*  Plan
+
+
+    1) Eff basics
+
+    2) Introduction to effect handlers
+
+    3) Probabilistic programming in Eff
+
+
+
+    Code available here:
+
+      github.com/ohad/eff-bayes
+
+                                            *)
+(********************************************)
+(*               Eff basics                 *)
+(* Floating point constants:                *)
+let pi = 4.0 *. atan 1.0
+
+(* Box-Muller transform:                    *)
+let box_muller u1 u2 = 
+  sqrt(-2.0 *. log u1) *. cos(2.0*. pi *.u2)
+
+(* Example: nested let statements *)  
+let split str =
+  let head = sub str 0 1
+  and rest = sub str 1 (string_length str - 1)
+  in  (head, rest)
+
+  
+
+
+
+
+
+
+(********************************************)
+(*               Eff basics (ctd)           *)
+(* User-defined datatypes:
+   Non-negative reals represented 
+   as logarithms                            *)
+type rplus = Exp of float
+
+(* Coercions                                *)
+let rplus_of_float x =  Exp (log x)
+
+let rplus_of_int a   =
+  rplus_of_float(float_of_int a)
+
+let float_of_rplus (Exp x) = exp x
+
+let ln (Exp x) = x
+let e x = Exp x
+
+
+(********************************************)
+(*               Eff basics (ctd)           *)
+(* Example: basic numerics                  *)
+                           
+let ( *.. ) (Exp x) (Exp y) = Exp (x +. y)
+let ( /.. ) (Exp x) (Exp y) = Exp (x -. y)
+let ( <=. ) (Exp x) (Exp y) = x <= y
+let square x = x *. x
+let cube   x = x *. square x
+
+let normal_pdf mean sdv x =
+  Exp(-.((square (x-.mean))
+         /.(2.0*. (square sdv))))
+  /..
+    (rplus_of_float(sdv *. sqrt(2.0*.pi)))
+  
+
+
+(********************************************)
+(* Conditionals                             *)
+let ( +.. ) =
+  let ln_plus x y (* ln (x + y) *)
+    = ( x +. log1p (exp (y -. x)))
+  in fun (Exp x) (Exp y) ->
+     if (x < y)
+     then Exp (ln_plus y x)
+     else Exp (ln_plus x y)
+
+(* Example: higher-order functions         *)
+let repeat : int -> (int -> unit) -> unit
+  = fun max f ->
+    let rec loop i =
+      if i < max
+      then (f i; loop (i + 1))
+      else ()
+    in loop 0
+(********************************************)
+(* Effects                                  *)
+
+
+
+     
+
+let hello () =
+
+  perform (Print "Hello world!\n")
+
+
+  
+
+
+
+
+
+
+(********************************************)
+(* Effects   (ctd)                          *)
+let plot : (float -> float) -> string
+           -> unit (*! Write *)
+  = fun f filename ->
+  let lft = 0.0  and rgt = 4.0   in
+  let stp = (rgt -. lft)/.1000.0 in
+  let rec loop current_step
+    = if current_step < rgt
+      then (perform (Write
+             ("data/"^filename
+              ,to_string current_step
+              ^ " " ^
+              to_string (f current_step)
+              ^ "\n"));
+          loop (current_step +. stp))
+      else ()
+  in loop lft
+(********************************************)
+(* Effects   (ctd)                          *)
+
+
+
+
+let example_plot ()
+  = plot (fun x -> float_of_rplus
+                     (normal_pdf 1.5 0.5 x))
+      "plot.dat"
+
+      
+
+
+
+
+
+
+(********************************************)
+(* User-defined effects                     *)
+(* Exceptions *)
+effect Boom : empty 
+let boom () = match perform Boom with
+  
+let explosive_div x y =
+  if y = 0
+  then boom ()
+  else x / y
+
+let graceful_div x y
+  = with handler
+       | effect Boom _ ->
+          perform (Print
+            "Division by 0. Returned 42.\n");
+          42
+       | v -> v
+    handle explosive_div x y
+(********************************************)
+(* Example: Unix-like cat                   *)
+effect GetChar : string
+effect PutChar : string -> unit
+    
+let get () = perform GetChar
+let put c  = perform (PutChar c)
+
+let basic_cat () = 
+let rec loop () =
+  let c = get () in
+  if not ("EOF" = c)
+  then put c; loop ()
+  else ()
+in loop ()
+(********************************************)
+(* Example: Unix-like cat (ctd)             *)  
+
+(* handling output *)
+let printer =
+  handler
+  | effect (PutChar c) k ->
+     perform (Print c); k ()
+  | v -> v
+
+
+           
+(********************************************)  (* Example: Unix-like cat (ctd)             *)  
+
+(* handling input *)           
+let line_buffer = 
+ handler
+| effect GetChar k ->
+   let rec get_char buffer =
+     (match buffer with
+      | "" -> get_char (perform Read ^ "\n")
+      | "EOF\n" -> k "EOF" ""
+      | str -> let (c,buffer) = split str
+               in k c buffer)
+   in get_char
+| v -> fun buffer -> v
+| finally f -> f ""
+
+
+
+(********************************************)
+(* Putting them together: *)
+let cat () =
+             with line_buffer handle
+             with printer     handle
+             basic_cat ()     
+
+(* more generally:  *)
+let top_level cat = with line_buffer handle
+                    with printer     handle
+                           cat ()
+                       
+let cat () = top_level basic_cat
+(********************************************)
+(* variations *)
+let double_cat () = top_level (fun () ->
+
+       with handler
+       | effect (PutChar c) k ->
+          put c; put c; k ()
+       | v -> v
+       handle basic_cat ())
+
+
+let reverse_cat () = top_level (fun () ->
+
+       with handler
+       | effect (PutChar c) k ->
+          k ();  put c
+       | v -> v
+       handle basic_cat ())
+                   
+(********************************************)
+
+let palindrome_cat () = top_level (fun () ->
+
+              with handler
+              | effect (PutChar c) k ->
+                 put c; k ();  put c
+              | v -> v
+              handle basic_cat ())
+
+                          
+(* and many more: escaping characters, 
+   pretty printing, ...                     *)
+
+
+
+
+                          
+(********************************************)  (*
+
+
+
+
+
+         Modular probabilistic programming
+
+
+             (work in progress!)
+
+
+
+
+
+
+                                                 *)                        
+(********************************************)
+(**   Goal: Bayesian Statistical Modelling 
+     Input data: x   y
+                 1   1.1
+                 2   1.9
+                 3   2.7
+     `Bayesian homogenous linear regression'
+
+     regression: measure/distribution
+                 over functions f : R -> R
+
+     homogeneous linear:
+                 assume f(x) = a*x
+
+     Bayesian:   start off with a prior
+                 distribution over R -> R, 
+                 e.g.: a ~ Normal(0, 2)
+                                            *)
+(********************************************)
+(*  ProbProg primitives                     *)
+effect Sample : float
+effect Score  : rplus -> unit
+
+let sample () = perform (Sample ())
+let score   r = perform (Score   r)
+           
+let random_sampler :
+      'a (*! Sample        *)
+   => 'a (*! RandomFloat   *)
+  = handler
+  | effect Sample k ->
+     continue k (perform (RandomFloat 1.))
+  | v -> v
+
+
+       
+(********************************************)
+(* Example:
+   Use Box-Muller to get a normal distribution: *)
+let standard_normal  (* Normal(0, 1) *)
+    : unit -> float (* ! Sample *)
+  = fun _ -> box_muller (sample ())
+                        (sample ())
+
+let normal mean sdv =
+  mean +. standard_normal () *. sdv 
+
+
+
+
+
+
+
+(********************************************)
+(*         Statistical modelling            *)
+type 'a model = unit
+                -> 'a (* ! Sample, Score *)
+
+type regression = (float -> float) model
+                
+let homogeneous_linear : regression
+  = fun _ ->
+      let a = normal 0.0 2.0 in
+      fun x -> a *. x
+
+let plot_reg () = repeat 100 (fun i ->
+        let f = with random_sampler
+                handle homogeneous_linear ()
+        in plot f
+             ("prior_regression_"
+              ^ (to_string i) ^".dat"))
+(********************************************)
+
+
+
+let fitted : regression = fun () ->
+  let f = (let a = normal 0.0 2.0 
+          in fun x -> a*. x)
+  in score (normal_pdf (f 1.0) 0.25 1.1);
+     score (normal_pdf (f 2.0) 0.25 1.9);
+     score (normal_pdf (f 3.0) 0.25 2.7);
+     f
+
+     
+(********************************************)
+(* More generally                           *)
+type data = (float*float) list
+let  dataset = [(1.0, 1.1)
+               ;(2.0, 1.9)
+               ;(3.0, 2.7)]
+
+let fit : regression -> data -> regression
+  = fun model dataset () ->
+  let f = model () in
+  map (fun (x,y) ->
+      score (normal_pdf (f x) 0.25 y)
+    ) dataset;
+  f
+
+let fitted = fit homogeneous_linear dataset
+
+
+(********************************************)
+(*Handling conditioning: collecting weights *)
+
+let weighted initial_weight
+    : 'a (*! Score, e*) => rplus * 'a  (*! e*)
+  = handler 
+  | effect (Score w) k ->
+     (fun w' -> continue k () (w' *.. w))
+  | v -> (fun w -> (w,v))
+  | finally prog -> prog initial_weight
+
+
+
+
+
+
+
+
+(********************************************)
+let plot_weighted_fitted ()
+  = repeat 15 (fun i ->
+        let (Exp w, f) = 
+          with random_sampler    handle
+          with weighted (Exp 0.) handle
+               fitted ()
+        in
+        perform
+          (Print (to_string (exp w) ^ "\n"));
+        plot f
+             ("silly_regression_"
+              ^ (to_string i) ^".dat")
+      )
+
+
+
+  
+(********************************************)
+(* importance sampling                      *)
+(* Part I: particle populations             *)
+
+type 'a list_dist = (rplus * 'a) list 
+                      
+let populate
+      (k : int)
+      (model : 'a model (*! Score, Sample, e*))
+    : 'a list_dist (*! Sample, e *) =
+  let rec loop i acc =
+    if i < k
+    then let result =
+         with weighted (Exp 0.) handle 
+            score (Exp 0. /.. rplus_of_int k)
+           ;model () 
+         in loop (i + 1) (result :: acc)
+    else acc
+  in loop 0 []
+(********************************************)
+(*  particle populations   (ctd)            *)
+let sum_weights (list_dist : 'a list_dist)
+    : rplus = 
+  fold_left
+    (fun acc (w, x) -> acc +.. w)
+    (rplus_of_int 0)
+    list_dist
+
+let normalise (pop : 'a list_dist)
+    : 'a list_dist =
+  let total = sum_weights pop in
+  map (fun (r,x) -> (r /.. total), x) pop
+
+
+
+  
+
+(********************************************)
+(* particle popluations (ctd)               *)
+let weighted_choice
+      (list_dist : 'a list_dist)
+    : 'a (*! Sample *)
+  = 
+  (*ASSUME list_dist is NON-EMPTY *)
+  let total_w = sum_weights list_dist in
+  let total_fuel = (float_of_rplus total_w)
+                   *. (sample ()) in
+  let rec choose fuel ((w, x) :: wxs) =
+    let fuel = fuel -. float_of_rplus w in
+    if fuel <= 0. then x else choose fuel wxs
+  in
+  choose total_fuel list_dist
+
+
+  
+
+(********************************************)
+(* particle populations (ctd)               *)
+let plot_population histogram name 
+  =
+  let negligible = 
+    filter (fun (Exp w, _) -> exp w < 0.00001)
+      histogram
+    |> length
+  in
+  perform (Print (to_string negligible ^ "\n"));
+  repeat 15 (fun i ->
+      let f = with random_sampler
+              handle weighted_choice histogram
+      in plot f
+           (name ^ "_regression_"
+            ^ (to_string i) ^".dat"))
+
+  
+(********************************************)
+(*  importance sampling    (ctd)            *)
+let (|>) x f = f x
+
+
+let importance_sampling () =
+  let particle_count = 1000 in
+  let histogram  = 
+    (with random_sampler
+     handle  populate particle_count fitted)
+    |> normalise 
+  
+  in (*     plot it              *)  
+  plot_population histogram "importance"
+
+
+
+
+(********************************************)
+(* particle populations  (ctd)              *)
+(* resampling:                              *)
+
+let resample (list_dist : 'a list_dist)
+    : 'a list_dist (*! Sample *)
+  =
+  let n = length list_dist in
+  let total_w = sum_weights list_dist in
+  let resample_model : 'a model = fun () -> (
+      score total_w;
+      weighted_choice list_dist )
+  in
+  populate n resample_model 
+
+let pop_map (f : 'a -> 'b)
+    : 'a list_dist -> 'b list_dist
+  = map (fun (r,a) -> (r,f a)  )
+
+(********************************************)
+(* suspended particles                      *)
+type 'a thunk = unit -> 'a
+
+effect Yield : unit
+let yield () = perform Yield
+             
+let yield_on_score
+    : 'a (*! score, e*) =>
+      'a (*! score, yield, e*) 
+  = handler
+  | effect (Score w) k ->
+     (score w
+     ;yield ()
+     ;k ()
+     )
+  | v -> v
+
+
+
+
+                 
+(********************************************)
+(* suspended particles  (ctd)               *)
+let advance : 'a (*! yield, e *)
+            => int -> 'a (*! yield,e *)
+  = handler
+  | effect Yield k -> fun a -> 
+     if a > 0
+     then k () (a - 1)
+     else (yield (); k () 0)
+  | v -> fun a -> v
+
+let finalize 
+    : 'a (*! yield, e *)
+    => 'a (* e *)
+  = handler
+  | effect Yield k -> k ()
+  | v -> v
+
+(********************************************)
+let smc particle_num step_num step_size model
+  = with random_sampler handle
+    (* set up the data structure *)
+    let pop = populate particle_num
+       (fun () -> with advance handle
+        with yield_on_score handle model ())
+    in let rec loop i pop =
+      if i < step_num then
+        pop
+        |> resample
+        |> map (fun (w,m) ->
+                with weighted w handle
+                with advance
+                handle m step_size)
+        |> loop (i + 1)
+      else
+        pop |> (pop_map (fun m ->
+                   with finalize handle m 0))
+    in (loop 0 pop)
+(********************************************)
+let run_smc () = 
+  let histogram = smc
+                    1000    (* particle_num *)
+                    4       (* step_num  *)
+                    1       (* step_size *)
+                    fitted  (* model     *)
+  in plot_population histogram "smc"
+
+(********************************************)
+(*
+  Summary:
+
+   + With enough glue, 
+      <<insert your language>>
+     can support:
+        probabilistic programming
+        statistical modelling
+        statistical machine learning
+
+   + Work in progress!  
+     TODO: Trace MCMC ---> rmsmc, smc^2,...
+   
+   + (Attempted) simplification of 
+           monad-bayes
+       (this, but with monads)   
+   + TODO: correctness via reasoning in MEGA
+*********************************************)
+         
