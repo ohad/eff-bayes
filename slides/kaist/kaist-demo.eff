@@ -89,7 +89,6 @@ https://www.cl.cam.ac.uk/events/metaprog/2019/
      github.com/yallop/effects-bibliography
                                             *)
 (********************************************)
-(********************************************)
 (*     Existing implementations
   
    Mainstream/industrial languages
@@ -137,10 +136,6 @@ let split str =
   let head = sub str 0 1
   and rest = sub str 1 (string_length str - 1)
   in  (head, rest)
-
-  
-
-
 
 
 
@@ -289,6 +284,9 @@ let rec loop () =
   then put c; loop ()
   else ()
 in loop ()
+
+
+ 
 (********************************************)
 (* Example: Unix-like cat (ctd)             *)  
 
@@ -326,12 +324,17 @@ let cat () =
              with printer     handle
              basic_cat ()     
 
-(* more generally:  *)
-let top_level cat = with line_buffer handle
-                    with printer     handle
-                           cat ()
+
+                
+(* more flexibly:  *)
+let top_level cat =
+             with line_buffer handle
+             with printer     handle
+             cat ()
                        
 let cat () = top_level basic_cat
+
+           
 (********************************************)
 (* variations *)
 let double_cat () = top_level (fun () ->
@@ -424,9 +427,9 @@ let random_sampler :
        
 (********************************************)
 (* Example:
-   Use Box-Muller to get a normal distribution: *)
+   Use Box-Muller for a normal distribution: *)
 let standard_normal  (* Normal(0, 1) *)
-    : unit -> float (* ! Sample *)
+    : unit -> float  (* ! Sample *)
   = fun _ -> box_muller (sample ())
                         (sample ())
 
@@ -460,6 +463,7 @@ let plot_reg () = repeat 100 (fun i ->
 (********************************************)
 
 
+                
 
 let fitted : regression = fun () ->
   let f = (let a = normal 0.0 2.0 
@@ -469,6 +473,11 @@ let fitted : regression = fun () ->
      score (normal_pdf (f 3.0) 0.25 2.7);
      f
 
+
+
+     
+
+     
      
 (********************************************)
 (* More generally                           *)
@@ -526,14 +535,14 @@ let plot_weighted_fitted ()
   
 (********************************************)
 (* importance sampling                      *)
-(* Part I: particle populations             *)
+(* using model populations                  *)
 
-type 'a list_dist = (rplus * 'a) list 
+type 'a histogram = (rplus * 'a) list 
                       
 let populate
       (k : int)
       (model : 'a model (*! Score, Sample, e*))
-    : 'a list_dist (*! Sample, e *) =
+    : 'a histogram (*! Sample, e *) =
   let rec loop i acc =
     if i < k
     then let result =
@@ -545,15 +554,15 @@ let populate
   in loop 0 []
 (********************************************)
 (*  particle populations   (ctd)            *)
-let sum_weights (list_dist : 'a list_dist)
+let sum_weights (histogram : 'a histogram)
     : rplus = 
   fold_left
     (fun acc (w, x) -> acc +.. w)
     (rplus_of_int 0)
-    list_dist
+    histogram
 
-let normalise (pop : 'a list_dist)
-    : 'a list_dist =
+let normalise (pop : 'a histogram)
+    : 'a histogram =
   let total = sum_weights pop in
   map (fun (r,x) -> (r /.. total), x) pop
 
@@ -564,18 +573,18 @@ let normalise (pop : 'a list_dist)
 (********************************************)
 (* particle popluations (ctd)               *)
 let weighted_choice
-      (list_dist : 'a list_dist)
+      (histogram : 'a histogram)
     : 'a (*! Sample *)
   = 
-  (*ASSUME list_dist is NON-EMPTY *)
-  let total_w = sum_weights list_dist in
+  (*ASSUME histogram is NON-EMPTY *)
+  let total_w = sum_weights histogram in
   let total_fuel = (float_of_rplus total_w)
                    *. (sample ()) in
   let rec choose fuel ((w, x) :: wxs) =
     let fuel = fuel -. float_of_rplus w in
     if fuel <= 0. then x else choose fuel wxs
   in
-  choose total_fuel list_dist
+  choose total_fuel histogram
 
 
   
@@ -617,22 +626,22 @@ let importance_sampling () =
 
 
 (********************************************)
-(* particle populations  (ctd)              *)
+(* model populations  (ctd)                 *)
 (* resampling:                              *)
 
-let resample (list_dist : 'a list_dist)
-    : 'a list_dist (*! Sample *)
+let resample (histogram : 'a histogram)
+    : 'a histogram (*! Sample *)
   =
-  let n = length list_dist in
-  let total_w = sum_weights list_dist in
+  let n = length histogram in
+  let total_w = sum_weights histogram in
   let resample_model : 'a model = fun () -> (
       score total_w;
-      weighted_choice list_dist )
+      weighted_choice histogram )
   in
   populate n resample_model 
 
 let pop_map (f : 'a -> 'b)
-    : 'a list_dist -> 'b list_dist
+    : 'a histogram -> 'b histogram
   = map (fun (r,a) -> (r,f a)  )
 
 (********************************************)
@@ -653,10 +662,6 @@ let yield_on_score
      )
   | v -> v
 
-
-
-
-                 
 (********************************************)
 (* suspended particles  (ctd)               *)
 let advance : 'a (*! yield, e *)
@@ -684,29 +689,37 @@ let smc particle_num step_num step_size model
         with yield_on_score handle model ())
     in let rec loop i pop =
       if i < step_num then
-        pop
-        |> resample
-        |> map (fun (w,m) ->
-                with weighted w handle
-                with advance
-                handle m step_size)
-        |> loop (i + 1)
+        pop |> resample
+            |> map (fun (w,m) ->
+                    with weighted w handle
+                    with advance
+                           handle m step_size)
+            |> loop (i + 1)
       else
         pop |> (pop_map (fun m ->
                    with finalize handle m 0))
     in (loop 0 pop)
 (********************************************)
-let run_smc () = 
+
+
+  let run_smc () = 
   let histogram = smc
-                    1000    (* particle_num *)
+                    200     (* particle_num *)
                     4       (* step_num  *)
                     1       (* step_size *)
                     fitted  (* model     *)
   in plot_population histogram "smc"
 
+
+
+       
+
+
+
+
+       
 (********************************************)
-(*
-  Summary:
+(*Summary:
 
    + With enough glue, 
       <<insert your language>>
@@ -718,9 +731,11 @@ let run_smc () =
    + Work in progress!  
      TODO: Trace MCMC ---> rmsmc, smc^2,...
    
-   + (Attempted) simplification of 
-           monad-bayes
-       (this, but with monads)   
-   + TODO: correctness via reasoning in MEGA
+   + (Attempted) simplification of monad-bayes
+       (like this, but with monads)   
+   + TODO: correctness via reasoning in 
+      Lukšič and Pretnar's MEGA project
+     
+     (MEGA = Make Equations Great Again)
 *********************************************)
          
