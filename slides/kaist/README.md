@@ -29,6 +29,8 @@ You will need a version of Eff with basic support for file output:
 
 and then build this eff:
 
+    opam   install .
+or
     opam reinstall .
 
 
